@@ -4,7 +4,7 @@ Windows 本地卡牌显示映射工具：自己指定原卡 A 显示成卡面 B�
 
 ## 下载与使用
 
-在 [Releases](https://github.com/slyzhydt/card-change/releases) 下载 `card-change-0.2.0-windows-x64.zip`，完整解压后运行 `card-change.exe`。不需要安装 Python、Node.js。
+在 [Releases](https://github.com/slyzhydt/card-change/releases) 下载 `card-change-0.2.1-windows-x64.zip`，完整解压后运行 `card-change.exe`。不需要安装 Python、Node.js。
 
 1. 首次点击“从游戏资源准备数据”，选择本机游戏 `gameres/manifest.ssra`。相邻的 `chunks` 分卷需要已下载到本机。
 2. 左侧按角色、卡名或编号选原卡；右侧选异画卡面、其他卡牌或本地动态异画。
@@ -17,7 +17,7 @@ Windows 本地卡牌显示映射工具：自己指定原卡 A 显示成卡面 B�
 ## 动态异画状态
 
 - 当前完整本地候选：`unique_30134_skin`。使用者已反馈上一版映射测试成功。
-- `unique_30075_sr_1_skin`（你专属的守护天使）尚未在当前本机清单找到，等待补齐资源。下载后重新准备数据即可扫描新目标；不会把静态卡图冒充动态资源。
+- “异画卡面”中的两张 SR 动态卡已按实际资源接入：北极星的邀请（9810001）、你专属的守护天使（9810002）。它们的完整资源位于 `effect/`。v0.2.0 只检查 `card/` 而误报缺失，v0.2.1 已更正。主骨架、背景、效果层及 CFX 一起检查，缺配套文件则保留原卡。
 - 窗口可以预览静态图，尚无动画预览。资源齐全不保证所有目标的动画与界面布局兼容。
 
 ## 源码运行与构建
@@ -35,6 +35,6 @@ python build_portable.py --node <node.exe> --ripper <ChaosZeroNightmareRipper-CL
 
 ## 检查与来源
 
-33 项 Python 检查、64 项 JavaScript 检查；已从压缩包重新解压并在空 PATH 环境完成冻结程序自检、真实本地数据准备与程序副本生成。游戏程序未被本轮发布流程安装或启动。具体版本记录见 CHANGELOG.md。
+36 项 Python 检查、72 项 JavaScript 检查；已从压缩包重新解压并在空 PATH 环境完成冻结程序自检、真实本地数据准备与程序副本生成。游戏程序未被本轮发布流程安装或启动。具体版本记录见 CHANGELOG.md。
 
 基于 [yporoc/Chaoszeronightmare-RenderFreedom](https://github.com/yporoc/Chaoszeronightmare-RenderFreedom) 0.1.0 修改，沿用 [GPL-3.0](LICENSE)，对应源码与可执行包一起公开。

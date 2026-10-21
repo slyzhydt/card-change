@@ -342,7 +342,7 @@ def manifest_check(table, manifest_path, add):
         return {}
     with open(manifest_path, 'rb') as stream:
         data = stream.read()
-    blob = re.findall(rb'[a-z0-9_]+(?:/[a-zA-Z0-9_]+)+\.(?:scsp|atlas|sct|srmd|srcs|srue)', data)
+    blob = re.findall(rb'[a-z0-9_]+(?:/[a-zA-Z0-9_]+)+\.(?:scsp|atlas|sct|srmd|srcs|srue|cfx)', data)
     have = set(x.decode() for x in blob)
     if not have:
         add('清单可解析', False, '扫不出资源路径，清单格式和预期不符')

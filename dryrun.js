@@ -369,10 +369,37 @@ const BAKEMISS = scenario('', { baked: cardsOnlyTable, cardRows: sourceRows, mis
 T('D63 内嵌动态目标缺资源时保留原卡数据', BAKEMISS.ctx.GameResDB.get('card', 'original') === sourceRows.original && BAKEMISS.ctx.CharacterUtil.getCardAnimation('original') === 0);
 const actualInput = INPUT_TABLE.mode === 'cards_only' ? INPUT_TABLE : { mode: 'cards_only', map: {}, rows: {}, selection: embeddedSelection };
 const ACTUAL = scenario('', { baked: actualInput, cardRows: sourceRows });
-T('D64 实际输入的仅卡牌表无角色覆盖或默认路径改路', ACTUAL.api.made().on === true && ACTUAL.APPLIED.length === 0 && Object.keys(ACTUAL.api.safe()).length === 0);
+const actualMappings = ACTUAL.api.safe();
+T('D64 实际输入的仅卡牌表无角色覆盖或任意路径改路', ACTUAL.api.made().on === true && ACTUAL.APPLIED.length === 0 && Object.keys(actualMappings).every(k => /^card\//.test(k) && /^effect\//.test(actualMappings[k].to)));
+
+const effectPatch = { sct_name: 'none', spine_model: 'effect_alternate', spine_directory: 'effect',
+  spine_layers: ['bg', 'eff'], spine_cfx: true, resources: [] };
+['', '_bg', '_eff'].forEach(s => ['scsp', 'atlas', 'sct'].forEach(e => effectPatch.resources.push('effect/effect_alternate' + s + '.' + e)));
+effectPatch.resources.push('effect/effect_alternate.cfx');
+const effectTable = Object.assign({}, cardsOnlyTable, { selection: JSON.parse(cardSelection(effectPatch)) });
+const EFFECT = scenario('', { baked: effectTable, cardRows: sourceRows });
+const effectRow = EFFECT.ctx.GameResDB.get('card', 'original');
+T('D65 effect 目录卡面保留原卡非显示字段', effectRow.spine_model === 'effect_alternate' && effectRow.cost === '7' && effectRow.link_skill_eff_id === '[original_skill]' && effectRow.id === 'original' && sourceRows.original.spine_model === 'none' && !Object.prototype.hasOwnProperty.call(effectRow, 'spine_directory'));
+EFFECT.ctx.sp.SkeletonAnimation.create('card/effect_alternate.scsp', 'card/effect_alternate.atlas', 1);
+T('D66 卡面主骨架与图集一起跨目录加载', EFFECT.CREATEARGS.slice(-1)[0].slice(0, 2).join('|') === 'effect/effect_alternate.scsp|effect/effect_alternate.atlas');
+EFFECT.ctx.sp.SkeletonAnimation.create('card/effect_alternate_bg.scsp', 'card/effect_alternate_bg.atlas', 1);
+EFFECT.ctx.sp.SkeletonAnimation.create('card/effect_alternate_eff.scsp', 'card/effect_alternate_eff.atlas', 1);
+EFFECT.FU.isFileExist('card/effect_alternate.cfx');
+T('D67 背景效果层与配套 cfx 都走实际目录', EFFECT.CREATEARGS.slice(-2).map(a => a[0]).join('|') === 'effect/effect_alternate_bg.scsp|effect/effect_alternate_eff.scsp' && EFFECT.INNER.slice(-1)[0] === 'effect/effect_alternate.cfx');
+const EFFECTMISS = scenario('', { baked: effectTable, cardRows: sourceRows, missingFile: 'effect/effect_alternate_bg.atlas' });
+EFFECTMISS.ctx.sp.SkeletonAnimation.create('card/effect_alternate.scsp', 'card/effect_alternate.atlas', 1);
+T('D68 配套资源缺失则原卡数据与跨目录改路一起停用', EFFECTMISS.ctx.GameResDB.get('card', 'original') === sourceRows.original && EFFECTMISS.CREATED.slice(-1)[0] === 'card/effect_alternate.scsp' && EFFECTMISS.ctx.CharacterUtil.getCardAnimation('original') === 0);
+const EFFECTROLE = scenario('', { baked: Object.assign({}, effectTable, { selection: JSON.parse(cardSelection(Object.assign({}, effectPatch, { spine_directory: 'model' }))) }) });
+T('D69 卡牌目录字段不能用来恢复角色换肤', EFFECTROLE.api.made().on === false && EFFECTROLE.APPLIED.length === 0);
+const EFFECTNOFU = scenario('nofu' + NL, { baked: effectTable, cardRows: sourceRows });
+T('D70 禁用改路入口时跨目录卡也保持原数据', EFFECTNOFU.ctx.GameResDB.get('card', 'original') === sourceRows.original && EFFECTNOFU.ctx.CharacterUtil.getCardAnimation('original') === 0);
+EFFECT.ctx.sp.SkeletonAnimation.create('card/unselected.scsp', 'card/unselected.atlas', 1);
+T('D71 非选中卡与其他资源不受跨目录配置影响', EFFECT.ctx.GameResDB.get('card', 'untouched') === sourceRows.untouched && EFFECT.CREATED.slice(-1)[0] === 'card/unselected.scsp' && EFFECT.APPLIED.length === 0);
+const EFFECTBAD = scenario('', { baked: Object.assign({}, effectTable, { selection: JSON.parse(cardSelection(Object.assign({}, effectPatch, { spine_layers: ['bg', '../model'] }))) }) });
+T('D72 非法配套层停止整个选择配置', EFFECTBAD.api.made().on === false);
 
 const bad = ck.filter(c => !c[1]).length;
-const SHOULD = 64;
+const SHOULD = 72;
 console.log(lines.join(NL));
 console.log(NL + '合计 ' + ck.length + ' 条（应有 ' + SHOULD + '），RED ' + bad);
 process.exit((bad || ck.length !== SHOULD) ? 1 : 0);

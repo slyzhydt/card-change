@@ -105,6 +105,7 @@ class Catalog:
         self.targets = {}
         for kind, rows in (('card', self.cards), ('card_skin', self.card_skins), ('local_dynamic', dynamic_cards)):
             for key, row in rows.items():
+                row = self.resolve_visual(row, kind)
                 resources = self.visual_resources(row)
                 missing = [name for name in resources if name not in self.paths]
                 self.targets[kind + ':' + key] = {
@@ -139,18 +140,43 @@ class Catalog:
     def label(self, row):
         return self.labels.get(row.get('name'), row.get('id', '?'))
 
+    def resolve_visual(self, row, kind):
+        row = dict(row)
+        stem = row.get('spine_model', 'none')
+        exts = ('scsp', 'atlas', 'sct')
+        if kind == 'card_skin' and stem not in ('', 'none', None):
+            card_ready = all('card/' + stem + '.' + ext in self.paths for ext in exts)
+            effect_ready = all('effect/' + stem + '.' + ext in self.paths for ext in exts)
+            if not card_ready and effect_ready:
+                row['spine_directory'] = 'effect'
+                row['spine_layers'] = [suffix for suffix in ('bg', 'eff')
+                                      if any('effect/' + stem + '_' + suffix + '.' + ext in self.paths for ext in exts)]
+                row['spine_cfx'] = 'effect/' + stem + '.cfx' in self.paths
+        return row
+
     @staticmethod
     def visual_resources(row):
         result = []
+        directory = row.get('spine_directory', 'card')
+        if directory not in ('card', 'effect'):
+            raise MappingError('动态卡面目录不支持')
         for field, directory, exts in (
                 ('sct_name', 'card_illustration', ('sct',)),
-                ('spine_model', 'card', ('scsp', 'atlas', 'sct'))):
+                ('spine_model', directory, ('scsp', 'atlas', 'sct'))):
             stem = row.get(field, 'none')
             if stem in ('', 'none', None):
                 continue
             if not isinstance(stem, str) or not re.fullmatch(r'[A-Za-z0-9_-]+', stem):
                 raise MappingError('显示资源名不合法：' + str(stem))
             result.extend(directory + '/' + stem + '.' + ext for ext in exts)
+        stem = row.get('spine_model', 'none')
+        if stem not in ('', 'none', None):
+            for layer in row.get('spine_layers', []):
+                if layer not in ('bg', 'eff'):
+                    raise MappingError('动态卡面配套层不支持')
+                result.extend(directory + '/' + stem + '_' + layer + '.' + ext for ext in ('scsp', 'atlas', 'sct'))
+            if row.get('spine_cfx'):
+                result.append(directory + '/' + stem + '.cfx')
         return result
 
     def compile(self, selections, use_builtin=False):
@@ -186,6 +212,9 @@ class Catalog:
             if not chosen['available']:
                 raise MappingError('目标卡面资源未齐全：' + chosen['label'])
             cards[source] = {field: chosen['row'].get(field, 'none') for field in ('sct_name', 'spine_model')}
+            for field in ('spine_directory', 'spine_layers', 'spine_cfx'):
+                if field in chosen['row']:
+                    cards[source][field] = chosen['row'][field]
             cards[source]['resources'] = chosen['resources']
         return {'schema': 1, 'mode': 'cards_only', 'use_builtin': False, 'routes': [],
                 'card_overrides': cards, 'manifest_sha256': self.manifest_sha,

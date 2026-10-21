@@ -86,6 +86,15 @@ class CardsOnlyTableTests(unittest.TestCase):
             self.assertEqual(report['missing'], ['card/missing.atlas'])
             self.assertFalse(results[-1][1])
 
+    def test_effect_cfx_is_recognized_by_generation_gate(self):
+        with tempfile.TemporaryDirectory(prefix='effect-manifest-', dir=Path(__file__).resolve().parent / 'work') as work:
+            manifest = Path(work) / 'manifest.ssra'
+            manifest.write_bytes(b'effect/alternate.cfx\0effect/alternate_bg.scsp\0')
+            table = {'mode': 'cards_only', 'map': {}, 'selection': {'card_overrides': {
+                'card_a': {'resources': ['effect/alternate.cfx', 'effect/alternate_bg.scsp']}}}}
+            report = engine.manifest_check(table, str(manifest), lambda *args: None)
+            self.assertEqual(report, {'need': 2, 'missing': []})
+
 
 class ProduceTests(unittest.TestCase):
     def setUp(self):

@@ -15,6 +15,11 @@ def fixture(root):
     paths = ['card_illustration/source_image.sct', 'card_illustration/target_image.sct',
              'card_illustration/rare_image.sct']
     paths.append('card/unique_2_skin.scsp')  # 不完整的动态资源应被隐藏、拒绝启用
+    paths.extend('effect/unique_2_sr_1_skin' + suffix + '.' + ext
+                 for suffix in ('', '_bg', '_eff') for ext in ('scsp', 'atlas', 'sct'))
+    paths.append('effect/unique_2_sr_1_skin.cfx')
+    paths.extend('effect/unique_3_sr_1_skin.' + ext for ext in ('scsp', 'atlas', 'sct'))
+    paths.append('effect/unique_3_sr_1_skin_bg.scsp')
     for stem in ('card/target_rig', 'card/unique_1_skin', 'card/unique_1_skin_bg'):
         paths.extend(stem + '.' + ext for ext in ('scsp', 'atlas', 'sct'))
     strings, records = bytearray(), bytearray()
@@ -33,7 +38,9 @@ def fixture(root):
                  dict(id='c_2_srt1', name='label.two', sct_name='target_image', spine_model='none'),
                  dict(id='c_999_srt1', name='label.unknown', sct_name='source_image', spine_model='none')],
         'card_skin': [dict(id='rare', name='label.rare', sct_name='rare_image', spine_model='none'),
-                      dict(id='missing', name='label.missing', sct_name='absent_image', spine_model='none')],
+                      dict(id='missing', name='label.missing', sct_name='absent_image', spine_model='none'),
+                      dict(id='guardian', name='label.guardian', sct_name='none', spine_model='unique_2_sr_1_skin'),
+                      dict(id='partial_guardian', name='label.partial', sct_name='none', spine_model='unique_3_sr_1_skin')],
         'char_base': [dict(id='1', name='label.character', model='1', standing_portrait_ani='none',
                            char_type='CHAR_COMBATANT', char_use_playable='YES'),
                       dict(id='2', name='label.character_two', model='2', standing_portrait_ani='none',
@@ -129,6 +136,22 @@ class MappingTests(unittest.TestCase):
         with self.assertRaisesRegex(MappingError, '已移除路径换肤'):
             self.catalog.load_selection(path)
         self.assertEqual(path.read_bytes(), before)
+
+    def test_effect_directory_card_includes_all_companion_resources(self):
+        document = self.catalog.compile([self.card('card_skin:guardian')])
+        display = document['card_overrides']['original']
+        self.assertEqual(display['spine_directory'], 'effect')
+        self.assertEqual(display['spine_layers'], ['bg', 'eff'])
+        self.assertTrue(display['spine_cfx'])
+        self.assertEqual(len(display['resources']), 10)
+        self.assertTrue(all(name.startswith('effect/unique_2_sr_1_skin') for name in display['resources']))
+        self.assertEqual(document['routes'], [])  # 仅卡牌模式不开放任意路径映射
+        self.assertNotIn('spine_directory', self.catalog.card_skins['guardian'])
+
+    def test_partial_background_blocks_effect_card_as_a_whole(self):
+        self.assertFalse(self.catalog.targets['card_skin:partial_guardian']['available'])
+        with self.assertRaisesRegex(MappingError, '未齐全'):
+            self.catalog.compile([self.card('card_skin:partial_guardian')])
 
     def test_config_roundtrip_preserves_disabled_items_and_mode(self):
         items = [self.card('card_skin:rare', False)]

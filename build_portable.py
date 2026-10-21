@@ -16,7 +16,7 @@ def main():
     parser.add_argument('--node-license', type=Path, required=True)
     parser.add_argument('--ripper-license', type=Path, required=True)
     parser.add_argument('--output', type=Path, default=Path('dist'))
-    parser.add_argument('--version', default='0.2.0')
+    parser.add_argument('--version', default='0.2.1')
     args = parser.parse_args()
     here = Path(__file__).resolve().parent
     output = args.output.resolve()

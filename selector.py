@@ -214,7 +214,7 @@ class Selector:
         target = self.catalog.targets[selected[0]]
         row = target['row']
         self.detail.set('目标：%s；图片：%s；动态骨架：%s。%s' % (
-            target['label'], row.get('sct_name', 'none'), row.get('spine_model', 'none'),
+            target['label'], row.get('sct_name', 'none'), row.get('spine_directory', 'card') + '/' + row.get('spine_model', 'none'),
             '缺少：' + ', '.join(target['missing']) if target['missing'] else '资源名称已匹配清单；实际加载待实测。'))
 
     def add_mapping(self):

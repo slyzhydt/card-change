@@ -146,15 +146,36 @@
       Object.keys(cards).forEach(function (id) {
         var p = cards[id], expected = [];
         if (!/^[A-Za-z0-9_-]{1,160}$/.test(id) || !p || typeof p !== 'object' ||
-            Object.keys(p).some(function (k) { return ['sct_name', 'spine_model', 'resources'].indexOf(k) < 0; })) throw new Error('卡牌显示字段不符');
+            Object.keys(p).some(function (k) { return ['sct_name', 'spine_model', 'resources', 'spine_directory', 'spine_layers', 'spine_cfx'].indexOf(k) < 0; })) throw new Error('卡牌显示字段不符');
         ['sct_name', 'spine_model'].forEach(function (field) {
           if (typeof p[field] !== 'string' || !/^(?:none|[A-Za-z0-9_-]+)$/.test(p[field])) throw new Error('卡牌资源名不符');
         });
+        var directory = p.spine_directory === undefined ? 'card' : p.spine_directory;
+        var layers = p.spine_layers === undefined ? [] : p.spine_layers;
+        if (['card', 'effect'].indexOf(directory) < 0 || !Array.isArray(layers) || layers.length > 2 ||
+            layers.some(function (s, i) { return ['bg', 'eff'].indexOf(s) < 0 || layers.indexOf(s) !== i; }) ||
+            (p.spine_cfx !== undefined && typeof p.spine_cfx !== 'boolean') ||
+            (p.spine_model === 'none' && (directory !== 'card' || layers.length || p.spine_cfx))) throw new Error('卡牌骨架目录或配套层不符');
         if (p.sct_name !== 'none') expected.push('card_illustration/' + p.sct_name + '.sct');
-        if (p.spine_model !== 'none') ['scsp', 'atlas', 'sct'].forEach(function (e) { expected.push('card/' + p.spine_model + '.' + e); });
+        var exts = ['scsp', 'atlas', 'sct'];
+        if (p.spine_model !== 'none') {
+          [''].concat(layers.map(function (s) { return '_' + s; })).forEach(function (suffix) {
+            exts.forEach(function (e) { expected.push(directory + '/' + p.spine_model + suffix + '.' + e); });
+          });
+          if (p.spine_cfx) expected.push(directory + '/' + p.spine_model + '.cfx');
+        }
         if (!expected.length || !Array.isArray(p.resources) || p.resources.length !== expected.length ||
             expected.some(function (name) { return p.resources.indexOf(name) < 0; })) throw new Error('卡牌资源清单不完整');
-        cardPicked[id] = { sct_name: p.sct_name, spine_model: p.spine_model, resources: expected };
+        cardPicked[id] = { sct_name: p.sct_name, spine_model: p.spine_model, resources: expected, relocated: directory === 'effect' };
+        if (directory === 'effect') {
+          [''].concat(layers.map(function (s) { return '_' + s; })).forEach(function (suffix) {
+            var source = 'card/' + p.spine_model + suffix, target = 'effect/' + p.spine_model + suffix;
+            if (picked[source] && picked[source].to !== target) throw new Error('卡牌路径冲突');
+            if (!picked[source]) count++;
+            picked[source] = { v: p.spine_model + suffix, to: target, e: suffix || !p.spine_cfx ? exts.slice() : exts.concat(['cfx']),
+              t: 'A', src: 'selection', required: expected.slice() };
+          });
+        }
       });
       if (doc.use_builtin === false) { M = {}; ROWS = {}; cfg.onlyselected = true; }
       Object.keys(picked).forEach(function (k) { M[k] = picked[k]; });
@@ -193,7 +214,7 @@
         ' 相对名 isFileExist=' + ex + ' 相对名读回命中=' + (rd.indexOf('SKINSHADOW') >= 0);
     }
     function stemOf(p) {
-      var m = String(p).match(/^(.*?)\/([A-Za-z0-9_.]+)\.(scsp|atlas|sct|srmd|srcs|srue)$/);
+      var m = String(p).match(/^(.*?)\/([A-Za-z0-9_.]+)\.(scsp|atlas|sct|srmd|srcs|srue|cfx)$/);
       return m ? { dir: m[1], stem: m[2], ext: m[3], full: m[1] + '/' + m[2] } : null;
     }
     function atlasFor(p) {
@@ -235,8 +256,9 @@
       var out = target + '.' + s.ext;
       if (m.src === 'selection') {
         var complete = !!RAW_EXIST;
-        for (var ei = 0; complete && ei < m.e.length; ei++) {
-          try { complete = !!RAW_EXIST.call(FU, target + '.' + m.e[ei]); }
+        var required = m.required || m.e.map(function (e) { return target + '.' + e; });
+        for (var ei = 0; complete && ei < required.length; ei++) {
+          try { complete = !!RAW_EXIST.call(FU, required[ei]); }
           catch (e) { complete = false; }
         }
         if (!complete) { bump(logRef, '选择目标资源不完整 ' + target); return p; }
@@ -362,6 +384,7 @@
 
     function cardResourcesReady(patch) {
       if (!RAW_EXIST) return false;
+      if (patch.relocated && (cfg.nomap || cfg.nofu || cfg.nocreate)) return false;
       try { return patch.resources.every(function (path) { return !!RAW_EXIST.call(FU, path); }); }
       catch (e) { return false; }
     }
