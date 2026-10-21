@@ -1,0 +1,15 @@
+__pycache__/
+work/
+data/
+out/
+build/
+dist*/
+*.spec
+*.exe
+*.dll
+*.pyd
+*.zip
+*.ssra
+*.ssrc
+*.sct
+*.scsp

@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "python_checks_passed": 33,
+  "javascript_checks_passed": 64,
+  "frozen_selfcheck_passed": true,
+  "frozen_local_data_preparation_passed": true,
+  "frozen_program_generation_passed": true,
+  "verification_environment_PATH_empty": true,
+  "game_program_or_assets_in_release": false,
+  "game_installed_or_launched_by_publish_process": false,
+  "user_reported_previous_mapping_test_success": true,
+  "second_dynamic_card_resource_status": "awaiting_local_download"
+}
