@@ -27,11 +27,28 @@ def main():
             from selector import Selector
             count, _ = engine.node_gate(str(resource('dryrun.js')), str(resource('table.json')),
                                         str(resource('payload.js')), lambda message: None)
+            angel = subprocess.run([node_executable(), str(resource('angel_dryrun.js'))],
+                                   capture_output=True, text=True, encoding='utf-8', errors='replace',
+                                   creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            if angel.returncode or '合计 21 条（应有 21），RED 0' not in angel.stdout:
+                raise ValueError('天使皮肤自检失败：' + angel.stdout[-500:])
+            skins = subprocess.run([node_executable(), str(resource('skins_dryrun.js'))], capture_output=True,
+                                   text=True, encoding='utf-8', errors='replace',
+                                   creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            if skins.returncode or '合计 60 条（应有 60），RED 0' not in skins.stdout:
+                raise ValueError('多皮肤自检失败：' + skins.stdout[-500:])
             root = tk.Tk()
             root.withdraw()
             try:
                 app = Selector(root)
+                source_rows = app.tabs['card']['source'].get_children()
+                if app.catalog and set(source_rows) != set(app.catalog.card_families):
+                    raise ValueError('整卡来源列表与卡牌分组不一致')
                 result = {'passed': True, 'javascript_checks': count, 'gui_created': True,
+                          'selection_unit': 'whole_card', 'source_card_rows': len(source_rows),
+                          'source_card_ids': len(app.catalog.cards) if app.catalog else 0,
+                          'angel_javascript_checks': 21,
+                          'skin_javascript_checks': 60,
                           'card_tabs': len(app.notebook.tabs()), 'node': node_executable(),
                           'ripper': str(ripper_executable()), 'pefile': pefile.__version__,
                           'frozen': bool(getattr(sys, 'frozen', False))}
@@ -47,6 +64,9 @@ def main():
                 raise ValueError('--build 需要 --config 与 --manifest')
             from selector_jobs import build_trial
             document = json.loads(Path(args.config).read_text(encoding='utf-8-sig'))
+            editor = document.get('_editor', {})
+            if editor.get('version') != 2 or editor.get('selection_unit') != 'whole_card':
+                raise ValueError('请先用新版选择器载入旧配置并另存为整卡配置，再生成程序')
             message = build_trial(args.build, document, args.manifest, lambda message: None)
             result = {'passed': True, 'result': message, 'installed': False}
         else:

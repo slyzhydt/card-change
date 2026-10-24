@@ -142,7 +142,7 @@
         count++;
       });
       var cards = doc.card_overrides || {};
-      if (typeof cards !== 'object' || Array.isArray(cards) || Object.keys(cards).length > 1000) throw new Error('卡牌映射结构不符');
+      if (typeof cards !== 'object' || Array.isArray(cards) || Object.keys(cards).length > 10000) throw new Error('卡牌映射结构不符');
       Object.keys(cards).forEach(function (id) {
         var p = cards[id], expected = [];
         if (!/^[A-Za-z0-9_-]{1,160}$/.test(id) || !p || typeof p !== 'object' ||
@@ -618,6 +618,7 @@
     } else if (cfg.nocreate) log('create 按 cfg nocreate 没包');
     else log('HOOK RED 无 sp.SkeletonAnimation.create');
 
+    /* ANGEL_SKIN_EXTENSION */
     globalThis.skinRender = {
       build: BUILD,
       made: function () { return { made: made, hit: logHit, refuse: logRef, anim: animStem, skin: skinStem, extra: extra, sampled: SAMPLED, dir: GOOD, cfg: cfg, on: REDIR_ON, rowstate: ROWSTATE, trap: TRAP }; },

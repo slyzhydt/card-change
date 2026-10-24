@@ -13,6 +13,20 @@ from runtime_paths import APP_DIR, ripper_executable, resource
 HERE = APP_DIR
 
 
+def compose_payload(text):
+    marker = '/* ANGEL_SKIN_EXTENSION */'
+    if text.count(marker) != 1:
+        raise MappingError('天使皮肤加载位置不唯一，不能生成')
+    extension = resource('angel_payload.js').read_text(encoding='utf-8')
+    return text.replace(marker, extension + '\nif (BAKED.angel_skin) installAngelSkin(BAKED.angel_skin, {\n'
+                        '  exists: RAW_EXIST, log: log,\n'
+                        '  enabled: function () { return REDIR_ON && !cfg.off && !cfg.nomap && !cfg.nofu && !cfg.nocreate; }\n'
+                        '});\n(BAKED.character_skins || []).forEach(function (profile) { installAngelSkin(profile, {\n'
+                        '  exists: RAW_EXIST, log: log,\n'
+                        '  enabled: function () { return REDIR_ON && !cfg.off && !cfg.nomap && !cfg.nofu && !cfg.nocreate; }\n'
+                        '}); });\n')
+
+
 def extract_preview(manifest, stem):
     if not isinstance(stem, str) or not re.fullmatch(r'[A-Za-z0-9_-]+', stem):
         raise MappingError('图片名称不合法')
@@ -51,24 +65,55 @@ def build_trial(source, document, manifest, log=print):
     executable = trial / 'game-mapped.exe'
     atomic_json(configuration, document)
     baked_table = trial / 'cards-only-table.json'
-    atomic_json(baked_table, {'mode': 'cards_only', 'map': {}, 'rows': {}, 'atlases': {},
-                             'revision': 'cards-only-1', 'selection': document})
     try:
+        from angel_skin import build_profile, selected_skins
+        skins = selected_skins(document.get('_editor', {}))
+        angel = '30075_01' in skins
+        table = {'mode': 'cards_only', 'map': {}, 'rows': {}, 'atlases': {},
+                 'revision': 'cards-only-1', 'selection': document}
+        payload = resource('payload.js')
+        for skin in skins:
+            profile = build_profile(manifest, trial / 'skin-check' / skin, log, skin_id=skin,
+                                    models_directory=trial / 'skinrender-models')
+            if profile['manifest_sha256'] != document['manifest_sha256']:
+                raise MappingError('皮肤检查与卡牌配置的清单版本不同，请刷新后重新生成')
+            if skin == '30075_01':
+                table['angel_skin'] = profile
+            else:
+                table.setdefault('character_skins', []).append(profile)
+        if skins:
+            payload = trial / 'combined-payload.js'
+            payload.write_text(compose_payload(resource('payload.js').read_text(encoding='utf-8')), encoding='utf-8')
+        atomic_json(baked_table, table)
+        if angel:
+            count, _ = engine.node_gate(str(resource('angel_dryrun.js')), str(baked_table), str(payload), log)
+            log('天使皮肤沙箱检查通过：%d 项' % count)
+        if skins:
+            count, _ = engine.node_gate(str(resource('skins_dryrun.js')), str(baked_table), str(payload), log)
+            log('多皮肤沙箱检查通过：%d 项' % count)
         result = engine.produce(str(source), str(executable), str(baked_table),
-                                str(resource('payload.js')), manifest=str(manifest), log=log)
+                                str(payload), manifest=str(manifest), log=log)
         atomic_json(trial / 'mapping-proof.json', {
             'manifest_sha256': document['manifest_sha256'],
             'config_sha256': hashlib.sha256(configuration.read_bytes()).hexdigest(),
             'program_sha256': engine.sha16(str(executable)),
             'source_sha256': result['proof']['src_sha256'],
-            'selected_cards': len(document['card_overrides']),
+            'selected_cards': sum(item.get('enabled') is True for item in document.get('_editor', {}).get('selections', [])),
+            'expanded_card_ids': len(document['card_overrides']),
             'selected_resource_routes': len(document['routes']),
             'mode': 'cards_only',
+            'angel_skin_enabled': angel,
+            'character_skins': skins,
             'configuration_baked': True,
             'real_game_tested': False,
             'installed': False,
+            'companion_models': [p['battle_model'] for p in
+                ([table['angel_skin']] if angel else []) + table.get('character_skins', [])
+                if p.get('battle_model')],
         })
     except Exception as exc:
         atomic_json(trial / 'FAILED.json', {'error': str(exc), 'installed': False})
         raise MappingError('测试副本未完成：%s；记录目录：%s' % (exc, trial)) from exc
-    return '测试副本已生成：%s。已包含卡牌选择，无需另放配置，旧外部选择配置不读取。尚未安装。' % trial
+    return '测试副本已生成：%s。已包含卡牌选择%s，无需另放配置。%s尚未安装。' % (
+        trial, '和 %d 套角色皮肤外观' % len(skins) if skins else '',
+        '请将 skinrender-models 文件夹与游戏程序一起放置。' if (trial / 'skinrender-models').exists() else '')

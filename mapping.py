@@ -80,6 +80,7 @@ class Catalog:
         for key in self.cards:
             match = re.match(r'^c_(\d+)_', key)
             self.card_owners[key] = match[1] if match and match[1] in self.characters else None
+        self.card_roots, self.card_families = self._card_families()
         self.labels = {}
         label_file = self.tables / 'labels.zht.json'
         if label_file.is_file():
@@ -113,13 +114,86 @@ class Catalog:
                     'resources': resources, 'missing': missing,
                     'available': bool(resources) and not missing,
                 }
+        self.card_target_keys = set()
+        for root, members in self.card_families.items():
+            candidates = ['card:' + root] + ['card:' + member for member in members if member != root]
+            self.card_target_keys.add(next((key for key in candidates if self.targets[key]['available']), candidates[0]))
 
     def card_groups(self):
         groups = {}
-        for owner in self.card_owners.values():
+        for key in self.card_families:
+            owner = self.card_owners[key]
             groups[owner] = groups.get(owner, 0) + 1
         return [(owner, self.label(self.characters[owner]), count)
                 for owner, count in sorted(groups.items(), key=lambda item: item[0] or '') if owner]
+
+    def _card_families(self):
+        parents = {}
+        for key, row in self.cards.items():
+            parent = key
+            owner = re.match(r'^c_(\d+)_', key)
+            name = row.get('name', 'none')
+            reference = name[len('card@name@'):] if isinstance(name, str) and name.startswith('card@name@') else None
+            other = self.cards.get(reference, {})
+            skin_set = row.get('card_skin_set')
+            if owner and reference != key and reference and reference.startswith('c_' + owner[1] + '_') and \
+                    other and skin_set not in ('', 'none', None) and skin_set == other.get('card_skin_set'):
+                parent = reference
+            elif owner:
+                variant = re.fullmatch(r'(.+)_(rsp\d+|pot|lbk|mut\d*)', key)
+                if variant and variant[1] in self.cards and (not variant[2].startswith('mut') or name in ('none', '', None)):
+                    parent = variant[1]
+            parents[key] = parent
+        roots, families = {}, {}
+        for key in self.cards:
+            chain, current = [], key
+            while current not in roots and parents[current] != current:
+                if current in chain:
+                    raise MappingError('卡牌身份关系存在循环：' + current)
+                chain.append(current)
+                current = parents[current]
+            root = roots.get(current, current)
+            roots[current] = root
+            for member in chain:
+                roots[member] = root
+            roots[key] = root
+            families.setdefault(root, []).append(key)
+        return roots, families
+
+    def normalize_selection(self, selections, merge_equivalent=False):
+        if not isinstance(selections, list) or len(selections) > 1000:
+            raise MappingError('映射列表格式不符或超过 1000 项')
+        result, seen = [], {}
+        for item in selections:
+            if not isinstance(item, dict) or type(item.get('enabled')) is not bool:
+                raise MappingError('映射启用状态不合法')
+            kind, source, target = item.get('kind'), item.get('source'), item.get('target')
+            if not isinstance(source, str) or not isinstance(target, str):
+                raise MappingError('映射来源和目标编号必须是字符串')
+            if kind == 'skin':
+                raise MappingError('角色皮肤更换功能已删除；原配置未改动，请另存仅含卡牌的配置')
+            if kind != 'card':
+                raise MappingError('映射类型不支持')
+            if source not in self.cards or target not in self.targets:
+                raise MappingError('找不到来源卡或目标卡面')
+            if not re.fullmatch(r'[A-Za-z0-9_-]{1,160}', source):
+                raise MappingError('来源卡编号不符合运行时格式')
+            source = self.card_roots[source]
+            if self.targets[target]['kind'] == 'card':
+                root_target = 'card:' + self.card_roots[self.targets[target]['id']]
+                if self.targets[root_target]['resources'] == self.targets[target]['resources']:
+                    target = root_target
+            normalized = {'kind': 'card', 'source': source, 'target': target, 'enabled': item['enabled']}
+            if source in seen:
+                previous = seen[source]
+                if merge_equivalent and previous['enabled'] == normalized['enabled'] and \
+                        self.targets[previous['target']]['resources'] == self.targets[target]['resources']:
+                    continue
+                raise MappingError('同一张卡设置了多个目标或不同启用状态：%s；请为整张卡重新选择一个目标，原配置未改动' %
+                                   self.label(self.cards[source]))
+            seen[source] = normalized
+            result.append(normalized)
+        return result
 
     def _table(self, name):
         path = self.tables / (name + '.json')
@@ -138,6 +212,8 @@ class Catalog:
         return result
 
     def label(self, row):
+        if row.get('name') in ('', 'none', None) and row.get('id') in self.card_roots:
+            row = self.cards[self.card_roots[row['id']]]
         return self.labels.get(row.get('name'), row.get('id', '?'))
 
     def resolve_visual(self, row, kind):
@@ -179,58 +255,60 @@ class Catalog:
                 result.append(directory + '/' + stem + '.cfx')
         return result
 
-    def compile(self, selections, use_builtin=False):
+    def compile(self, selections, use_builtin=False, angel_skin=False, character_skins=None):
+        from angel_skin import selected_skins
+        skins = selected_skins({'angel_skin': angel_skin, 'character_skins': character_skins if character_skins is not None else []})
+        if type(angel_skin) is not bool:
+            raise MappingError('天使皮肤开关必须是布尔值')
         if type(use_builtin) is not bool:
             raise MappingError('内置映射开关必须是布尔值')
         if use_builtin:
             raise MappingError('角色换肤与旧版内置替换已移除，请使用仅含卡牌选择的配置')
         if not self.version_verified or hashlib.sha256(self.manifest.read_bytes()).hexdigest() != self.manifest_sha:
             raise MappingError('数据表与清单版本未核对一致，需要使用同一轮提取的数据')
-        if not isinstance(selections, list) or len(selections) > 1000:
-            raise MappingError('映射列表格式不符或超过 1000 项')
-        cards, seen = {}, set()
+        selections = self.normalize_selection(selections)
+        cards = {}
         for item in selections:
-            if not isinstance(item, dict) or type(item.get('enabled')) is not bool:
-                raise MappingError('映射启用状态不合法')
-            kind, source, target = item.get('kind'), item.get('source'), item.get('target')
-            if not isinstance(source, str) or not isinstance(target, str):
-                raise MappingError('映射来源和目标编号必须是字符串')
-            if kind == 'skin':
-                raise MappingError('角色皮肤更换功能已删除；原配置未改动，请另存仅含卡牌的配置')
-            if kind != 'card':
-                raise MappingError('映射类型不支持')
-            if source not in self.cards or target not in self.targets:
-                raise MappingError('找不到来源卡或目标卡面')
-            if not re.fullmatch(r'[A-Za-z0-9_-]{1,160}', source):
-                raise MappingError('来源卡编号不符合运行时格式')
+            source, target = item['source'], item['target']
             chosen = self.targets[target]
             if not item['enabled']:
                 continue
-            if source in seen:
-                raise MappingError('同一张卡启用了多个目标')
-            seen.add(source)
             if not chosen['available']:
                 raise MappingError('目标卡面资源未齐全：' + chosen['label'])
-            cards[source] = {field: chosen['row'].get(field, 'none') for field in ('sct_name', 'spine_model')}
+            display = {field: chosen['row'].get(field, 'none') for field in ('sct_name', 'spine_model')}
             for field in ('spine_directory', 'spine_layers', 'spine_cfx'):
                 if field in chosen['row']:
-                    cards[source][field] = chosen['row'][field]
-            cards[source]['resources'] = chosen['resources']
-        return {'schema': 1, 'mode': 'cards_only', 'use_builtin': False, 'routes': [],
+                    display[field] = chosen['row'][field]
+            display['resources'] = chosen['resources']
+            for member in self.card_families[source]:
+                if not re.fullmatch(r'[A-Za-z0-9_-]{1,160}', member):
+                    raise MappingError('整卡成员编号不符合运行时格式')
+                cards[member] = dict(display)
+        document = {'schema': 1, 'mode': 'cards_only', 'use_builtin': False, 'routes': [],
                 'card_overrides': cards, 'manifest_sha256': self.manifest_sha,
-                '_editor': {'version': 1, 'selections': selections}}
+                '_editor': {'version': 2, 'selection_unit': 'whole_card', 'selections': selections, 'angel_skin': '30075_01' in skins,
+                            'character_skins': skins}}
+        if len(cards) > 10000 or len(json.dumps(document, ensure_ascii=False, separators=(',', ':')).encode('utf-8')) > 1048576:
+            raise MappingError('整卡展开后的配置超过运行时容量，请减少本次选择的卡牌')
+        return document
 
     def load_selection(self, path):
         document = json.loads(Path(path).read_text(encoding='utf-8-sig'))
         if not isinstance(document, dict):
             raise MappingError('配置必须是 JSON 对象')
         editor = document.get('_editor', {})
-        if not isinstance(editor, dict) or editor.get('version') != 1:
+        if not isinstance(editor, dict) or editor.get('version') not in (1, 2) or \
+                (editor.get('version') == 2 and editor.get('selection_unit') != 'whole_card'):
             raise MappingError('该配置不是本选择器保存的格式，原文件保持不变')
-        selections = editor.get('selections')
+        selections = self.normalize_selection(editor.get('selections'), merge_equivalent=editor['version'] == 1)
         if document.get('manifest_sha256') != self.manifest_sha:
             raise MappingError('配置对应的资源清单版本不同，需重新选择映射')
         if document.get('routes'):
             raise MappingError('本选择器已移除路径换肤，请另存仅含卡牌选择的配置；原文件未改动')
-        self.compile(selections, document.get('use_builtin', False))
+        from angel_skin import selected_skins
+        skins = selected_skins(editor)
+        self.compile(selections, document.get('use_builtin', False), character_skins=skins)
+        self.loaded_character_skins = skins
+        self.loaded_angel_skin = '30075_01' in skins
+        self.loaded_migrated = editor['version'] == 1 or selections != editor.get('selections')
         return selections, bool(document.get('use_builtin', False))

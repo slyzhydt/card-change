@@ -194,6 +194,152 @@ class MappingTests(unittest.TestCase):
         with self.assertRaises(MappingError):
             read_manifest(self.manifest)
 
+    def grouped_catalog(self):
+        rows = list(self.catalog.cards.values())
+        base = dict(self.catalog.cards['c_1_srt1'], card_skin_set='set_one')
+        rows = [base if row['id'] == base['id'] else row for row in rows]
+        variants = ['c_1_srt1_rsp1', 'c_1_srt1_rsp2', 'c_1_srt1_pot',
+                    'c_1_srt1_lbk', 'c_1_srt1_rsp1_mut']
+        rows.extend(dict(base, id=key, name='none', sct_name='rare_image') for key in variants)
+        rows.extend([
+            dict(base, id='c_1_srt2', name='different_card'),
+            dict(base, id='c_1_srt1_mut1', name='card@name@c_1_srt1_mut1', card_skin_set='set_new'),
+            dict(base, id='c_1_cre1', name='card@name@c_1_cre1', card_skin_set='set_created'),
+            dict(base, id='c_1_srt1_mut2', name='card@name@c_1_cre1', card_skin_set='set_created'),
+            dict(base, id='c_2_cre1_mut1', name='card@name@c_1_cre1', card_skin_set='set_created'),
+        ])
+        atomic_json(self.tables / 'card.json', rows)
+        receipt = json.loads((self.root / 'verification.json').read_text(encoding='utf-8'))
+        receipt['tables']['card']['sha256'] = hashlib.sha256((self.tables / 'card.json').read_bytes()).hexdigest()
+        atomic_json(self.root / 'verification.json', receipt)
+        self.catalog = Catalog(self.tables, self.manifest)
+        return self.catalog, ['c_1_srt1'] + variants
+
+    def test_whole_card_expands_all_known_states_and_only_visual_fields(self):
+        catalog, members = self.grouped_catalog()
+        before = json.dumps(catalog.cards, sort_keys=True)
+        document = catalog.compile([dict(self.card('card_skin:guardian'), source='c_1_srt1_rsp1')])
+        self.assertEqual(set(document['card_overrides']), set(members))
+        self.assertTrue(all(value == document['card_overrides'][members[0]] for value in document['card_overrides'].values()))
+        self.assertEqual(document['_editor']['selections'][0]['source'], 'c_1_srt1')
+        self.assertEqual(document['_editor']['selection_unit'], 'whole_card')
+        self.assertTrue(all('cost' not in value for value in document['card_overrides'].values()))
+        self.assertEqual(json.dumps(catalog.cards, sort_keys=True), before)
+
+    def test_shared_art_and_independent_named_mutation_are_not_same_card(self):
+        catalog, members = self.grouped_catalog()
+        self.assertNotIn('c_1_srt2', members)
+        self.assertEqual(catalog.card_roots['c_1_srt2'], 'c_1_srt2')
+        self.assertEqual(catalog.card_roots['c_1_srt1_mut1'], 'c_1_srt1_mut1')
+        self.assertEqual(catalog.card_roots['c_1_srt1_mut2'], 'c_1_cre1')
+        self.assertEqual(catalog.card_roots['c_2_cre1_mut1'], 'c_2_cre1_mut1')
+
+    def test_whole_card_disabled_roundtrip_and_target_change(self):
+        catalog, members = self.grouped_catalog()
+        item = dict(self.card('card_skin:rare', False), source='c_1_srt1')
+        path = self.root / 'whole.json'
+        atomic_json(path, catalog.compile([item]))
+        self.assertEqual(catalog.load_selection(path), ([item], False))
+        self.assertFalse(catalog.loaded_migrated)
+        self.assertEqual(catalog.compile([item])['card_overrides'], {})
+        item.update(enabled=True, target='card:target')
+        patches = catalog.compile([item])['card_overrides']
+        self.assertEqual(set(patches), set(members))
+        self.assertTrue(all(p['spine_model'] == 'target_rig' for p in patches.values()))
+
+    def test_legacy_consistent_variants_merge_without_rewriting_input(self):
+        catalog, members = self.grouped_catalog()
+        document = catalog.compile([])
+        document['_editor'] = {'version': 1, 'angel_skin': True, 'selections': [
+            dict(self.card('card_skin:rare'), source=source) for source in members]}
+        path = self.root / 'legacy.json'
+        atomic_json(path, document)
+        before = path.read_bytes()
+        items, _ = catalog.load_selection(path)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]['source'], 'c_1_srt1')
+        self.assertTrue(catalog.loaded_migrated)
+        self.assertTrue(catalog.loaded_angel_skin)
+        self.assertEqual(set(catalog.compile(items)['card_overrides']), set(members))
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_legacy_conflicting_targets_and_states_are_rejected_without_data_loss(self):
+        catalog, _ = self.grouped_catalog()
+        for target, enabled in [('card:target', True), ('card_skin:rare', False)]:
+            document = catalog.compile([])
+            document['_editor'] = {'version': 1, 'selections': [
+                dict(self.card('card_skin:rare'), source='c_1_srt1'),
+                dict(self.card(target, enabled), source='c_1_srt1_rsp1')]}
+            path = self.root / 'conflict.json'
+            atomic_json(path, document)
+            before = path.read_bytes()
+            with self.assertRaisesRegex(MappingError, '整张卡重新选择'):
+                catalog.load_selection(path)
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_legacy_targets_with_identical_resources_merge(self):
+        catalog, _ = self.grouped_catalog()
+        document = catalog.compile([])
+        document['_editor'] = {'version': 1, 'selections': [
+            dict(self.card('card:c_1_srt1_rsp1'), source='c_1_srt1'),
+            dict(self.card('card:c_1_srt1_rsp2'), source='c_1_srt1_rsp1')]}
+        path = self.root / 'same-visual.json'
+        atomic_json(path, document)
+        items, _ = catalog.load_selection(path)
+        self.assertEqual(len(items), 1)
+        self.assertTrue(all(p['sct_name'] == 'rare_image' for p in catalog.compile(items)['card_overrides'].values()))
+
+    def test_duplicate_family_in_new_selection_is_rejected(self):
+        catalog, _ = self.grouped_catalog()
+        with self.assertRaisesRegex(MappingError, '同一张卡'):
+            catalog.compile([dict(self.card(), source='c_1_srt1'), dict(self.card(), source='c_1_srt1_rsp2')])
+
+    def test_oversized_expansion_rejected_before_runtime(self):
+        catalog, _ = self.grouped_catalog()
+        with patch.dict(catalog.card_families, {'original': ['fake_' + str(i) for i in range(10001)]}):
+            with self.assertRaisesRegex(MappingError, '容量'):
+                catalog.compile([self.card()])
+        with patch.dict(catalog.card_families, {'original': ['fake_' + str(i) for i in range(5001)]}):
+            with self.assertRaisesRegex(MappingError, '容量'):
+                catalog.compile([self.card('card_skin:guardian')])
+        with patch.dict(catalog.card_families, {'original': ['../bad']}):
+            with self.assertRaisesRegex(MappingError, '编号'):
+                catalog.compile([self.card()])
+
+    def test_whole_card_gui_lists_once_searches_member_and_toggles_whole_family(self):
+        catalog, members = self.grouped_catalog()
+        import tkinter as tk
+        import selector
+        root = tk.Tk()
+        root.withdraw()
+        self.addCleanup(root.destroy)
+        with patch.object(selector, 'discover_inputs', return_value=(self.tables, self.manifest)):
+            app = selector.Selector(root)
+        self.addCleanup(lambda: root.after_cancel(app.poll_id))
+        tab = app.tabs['card']
+        self.assertEqual(set(tab['source'].get_children()), set(catalog.card_families))
+        tab['source_search'].set('c_1_srt1_rsp1')
+        app.render_lists('card')
+        self.assertEqual(tab['source'].get_children(), ('c_1_srt1',))
+        tab['source'].selection_set('c_1_srt1')
+        tab['target'].selection_set('card_skin:rare')
+        app.add_mapping()
+        self.assertEqual(len(app.items), 1)
+        self.assertEqual(set(app.catalog.compile(app.items)['card_overrides']), set(members))
+        app.mapping_tree.selection_set('0')
+        app.toggle_mapping()
+        self.assertEqual(app.catalog.compile(app.items)['card_overrides'], {})
+        app.mapping_tree.selection_set('0')
+        app.toggle_mapping()
+        self.assertEqual(set(app.catalog.compile(app.items)['card_overrides']), set(members))
+        tab['target_kind'].set('其他卡牌')
+        app.render_targets('card')
+        self.assertTrue(tab['target'].exists('card:c_1_srt1'))
+        self.assertFalse(any(tab['target'].exists('card:' + member) for member in members[1:]))
+        app.mapping_tree.selection_set('0')
+        app.delete_mapping()
+        self.assertEqual(app.items, [])
+
     def test_ui_add_toggle_save_and_load(self):
         import tkinter as tk
         from tkinter import ttk

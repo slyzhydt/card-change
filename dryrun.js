@@ -398,8 +398,22 @@ T('D71 非选中卡与其他资源不受跨目录配置影响', EFFECT.ctx.GameR
 const EFFECTBAD = scenario('', { baked: Object.assign({}, effectTable, { selection: JSON.parse(cardSelection(Object.assign({}, effectPatch, { spine_layers: ['bg', '../model'] }))) }) });
 T('D72 非法配套层停止整个选择配置', EFFECTBAD.api.made().on === false);
 
+const inputPatches = actualInput.selection.card_overrides || {};
+const inputRows = {__whole_card_unselected: {id:'__whole_card_unselected',cost:'19',sct_name:'original_image',spine_model:'none'}};
+Object.keys(inputPatches).forEach(id=>{inputRows[id]={id,name:'name_'+id,cost:'7',link_skill_eff_id:'[original_skill]',sct_name:'original_image',spine_model:'none'};});
+const WHOLE = scenario('', {baked:actualInput,cardRows:inputRows,noFirstCreate:true});
+T('D73 实际配置所有展开编号使用各自目标且保留玩法字段',Object.keys(inputPatches).every(id=>{
+  const row=WHOLE.ctx.GameResDB.get('card',id), p=inputPatches[id];
+  return row.id===id&&row.cost==='7'&&row.link_skill_eff_id==='[original_skill]'&&row.sct_name===p.sct_name&&row.spine_model===p.spine_model&&inputRows[id].spine_model==='none';
+}));
+T('D74 实际整卡动态状态全部统一且未选卡不变',Object.keys(inputPatches).every(id=>WHOLE.ctx.CharacterUtil.getCardAnimation(id)===(inputPatches[id].spine_model==='none'?0:1))&&WHOLE.ctx.GameResDB.get('card','__whole_card_unselected')===inputRows.__whole_card_unselected);
+const largePatches={},largeRows={};
+for(let i=0;i<1001;i++){const id='grouped_'+i;largePatches[id]=displayPatch;largeRows[id]={id,cost:'7',spine_model:'none'};}
+const LARGE=scenario('',{baked:Object.assign({},cardsOnlyTable,{selection:Object.assign({},embeddedSelection,{card_overrides:largePatches})}),cardRows:largeRows,noFirstCreate:true});
+T('D75 整卡展开超过一千编号仍可在容量内加载',LARGE.api.made().on===true&&LARGE.ctx.GameResDB.get('card','grouped_1000').spine_model==='target_rig');
+
 const bad = ck.filter(c => !c[1]).length;
-const SHOULD = 72;
+const SHOULD = 75;
 console.log(lines.join(NL));
 console.log(NL + '合计 ' + ck.length + ' 条（应有 ' + SHOULD + '），RED ' + bad);
 process.exit((bad || ck.length !== SHOULD) ? 1 : 0);

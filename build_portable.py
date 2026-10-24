@@ -16,7 +16,7 @@ def main():
     parser.add_argument('--node-license', type=Path, required=True)
     parser.add_argument('--ripper-license', type=Path, required=True)
     parser.add_argument('--output', type=Path, default=Path('dist'))
-    parser.add_argument('--version', default='0.2.1')
+    parser.add_argument('--version', default='0.3.1-test1')
     args = parser.parse_args()
     here = Path(__file__).resolve().parent
     output = args.output.resolve()
@@ -31,6 +31,9 @@ def main():
                     '--add-data', str(here / 'payload.js') + ';.',
                     '--add-data', str(here / 'table.json') + ';.',
                     '--add-data', str(here / 'dryrun.js') + ';.',
+                    '--add-data', str(here / 'angel_payload.js') + ';.',
+                    '--add-data', str(here / 'angel_dryrun.js') + ';.',
+                    '--add-data', str(here / 'skins_dryrun.js') + ';.',
                     '--add-data', str(here / 'assets' / 'db-format-xor.hex') + ';assets',
                     '--log-level', 'WARN', str(here / 'portable_main.py')], cwd=here, check=True)
     for source, destination in (

@@ -7,6 +7,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from mapping import Catalog, MappingError, atomic_json, discover_inputs
 from runtime_paths import APP_DIR
+from angel_skin import SKINS
 
 
 class Selector:
@@ -19,7 +20,9 @@ class Selector:
         self.events = queue.Queue()
         self.preview_image = None
         self.last_saved = None
-        root.title('卡牌自选映射 · 试用版')
+        self.skin_vars = {key: tk.BooleanVar(value=False) for key in SKINS}
+        self.angel_var = self.skin_vars['30075_01']
+        root.title('卡牌自选映射 · 整卡选择版 0.3.1-test1')
         root.geometry('1120x810')
         root.minsize(940, 700)
         tables, manifest = discover_inputs()
@@ -40,7 +43,19 @@ class Selector:
         top.pack(fill='x', pady=7)
         ttk.Button(top, text='加载 / 刷新数据', command=self.load_data).pack(side='left')
         ttk.Button(top, text='从游戏资源准备数据', command=self.prepare_local_data).pack(side='left', padx=6)
-        ttk.Label(top, text='只改卡牌；选择结果随测试副本生成', foreground='#575757').pack(side='right')
+        ttk.Label(top, text='选择结果随测试副本生成；不自动安装', foreground='#575757').pack(side='right')
+        skin_panel = ttk.LabelFrame(outer, text='角色皮肤（完整战斗／日常小人；日常小人需要配套模型文件夹）', padding=4)
+        skin_panel.pack(fill='x', pady=(0, 6))
+        self.skin_buttons = {}
+        for index, (key, label) in enumerate(SKINS.items()):
+            battle = '／完整战斗' if key in ('30075_01', '30134_02') else '／日常小人'
+            button = ttk.Checkbutton(skin_panel, text=label + ' · 立绘' + battle, variable=self.skin_vars[key], command=self.changed)
+            button.grid(row=index // 3, column=index % 3, sticky='w', padx=8)
+            self.skin_buttons[key] = button
+        actions = ttk.Frame(skin_panel)
+        actions.grid(row=3, column=0, columnspan=3, sticky='w')
+        ttk.Button(actions, text='全部勾选', command=lambda: self.set_skin_choices(True)).pack(side='left')
+        ttk.Button(actions, text='全部取消', command=lambda: self.set_skin_choices(False)).pack(side='left', padx=6)
         self.notebook = ttk.Notebook(outer)
         self.notebook.pack(fill='both', expand=True)
         self.tabs = {}
@@ -80,7 +95,7 @@ class Selector:
         frame.rowconfigure(list_row, weight=1)
         data = {'frame': frame, 'source_search': tk.StringVar(), 'target_search': tk.StringVar(),
                 'target_kind': tk.StringVar(value='异画卡面'), 'available': tk.BooleanVar(value=True)}
-        ttk.Label(frame, text='① 选择原卡').grid(row=0, column=0, sticky='w')
+        ttk.Label(frame, text='① 选择整张原卡（所有已识别状态一起更换）').grid(row=0, column=0, sticky='w')
         right = ttk.Frame(frame)
         right.grid(row=0, column=1, sticky='ew', padx=(10, 0))
         ttk.Label(right, text='② 选择目标').pack(side='left')
@@ -126,6 +141,16 @@ class Selector:
     def changed(self):
         self.dirty = True
 
+    def selected_skins(self):
+        return [key for key, variable in self.skin_vars.items() if variable.get()]
+
+    def set_skin_choices(self, enabled):
+        if self.busy:
+            return
+        for variable in self.skin_vars.values():
+            variable.set(enabled)
+        self.changed()
+
     def pick_tables(self):
         path = filedialog.askdirectory(title='选择包含 card.json 的表目录')
         if path:
@@ -139,7 +164,7 @@ class Selector:
     def load_data(self):
         if self.busy:
             return
-        if self.items and not messagebox.askyesno('重新加载', '重新加载会清空当前选择，是否继续？'):
+        if (self.items or self.selected_skins()) and not messagebox.askyesno('重新加载', '重新加载会清空当前选择，是否继续？'):
             return
         try:
             catalog = Catalog(self.tables_var.get(), self.manifest_var.get())
@@ -147,19 +172,27 @@ class Selector:
             messagebox.showerror('数据加载失败', str(exc))
             return
         self.catalog, self.items, self.dirty, self.last_saved = catalog, [], False, None
+        for variable in self.skin_vars.values():
+            variable.set(False)
+        for key, button in self.skin_buttons.items():
+            owner = key.split('_')[0]
+            name = catalog.label(catalog.characters[owner]) if owner in catalog.characters else owner
+            capability = ' · 立绘／完整战斗' if key in ('30075_01', '30134_02') else ' · 立绘／日常小人'
+            button.configure(text=name + ' → ' + SKINS[key] + capability)
         tab = self.tabs['card']
         groups = catalog.card_groups()
         tab['owner_keys'] = ['all'] + [owner for owner, label, count in groups] + [None]
-        other_count = sum(owner is None for owner in catalog.card_owners.values())
-        tab['owner_filter']['values'] = [f'全部原卡（{len(catalog.cards)}）'] + [
+        other_count = sum(catalog.card_owners[key] is None for key in catalog.card_families)
+        tab['owner_filter']['values'] = [f'全部原卡（{len(catalog.card_families)}）'] + [
             f'{label} [{owner}]（{count}）' for owner, label, count in groups] + [f'其他／未归类（{other_count}）']
         tab['owner_filter'].current(0)
         for kind in self.tabs:
             self.render_lists(kind)
         self.render_mappings()
-        available = sum(row['available'] for row in catalog.targets.values())
-        self.status.set('已加载 %d 张卡、%d 张异画；%d 个卡面目标已匹配清单。%s' % (
-            len(catalog.cards), len(catalog.card_skins), available,
+        available = sum(row['available'] for key, row in catalog.targets.items()
+                        if row['kind'] != 'card' or key in catalog.card_target_keys)
+        self.status.set('已加载 %d 张整卡（覆盖 %d 个状态编号）、%d 张异画；%d 个卡面目标已匹配清单。%s' % (
+            len(catalog.card_families), len(catalog.cards), len(catalog.card_skins), available,
             '数据版本已核对，游戏效果待实测。' if catalog.version_verified else '数据版本未核对一致，暂不能导出。'))
 
     @staticmethod
@@ -173,7 +206,7 @@ class Selector:
         tree = tab['source']
         previous = tree.selection()
         tree.delete(*tree.get_children())
-        rows = self.catalog.cards
+        rows = {key: self.catalog.cards[key] for key in self.catalog.card_families}
         group = tab['owner_keys'][max(0, tab['owner_filter'].current())] if kind == 'card' else 'all'
         for key, row in rows.items():
             owner = self.catalog.card_owners.get(key) if kind == 'card' else None
@@ -181,8 +214,9 @@ class Selector:
                 continue
             label = self.catalog.label(row)
             owner_label = self.catalog.label(self.catalog.characters[owner]) if owner else ''
-            if self.matches(tab['source_search'].get(), label, key, owner_label):
-                state = '动态' if row.get('spine_model', 'none') != 'none' else '静态'
+            members = self.catalog.card_families[key]
+            if self.matches(tab['source_search'].get(), label, key, owner_label, ' '.join(members)):
+                state = '%s · %d个状态' % ('动态' if row.get('spine_model', 'none') != 'none' else '静态', len(members))
                 tree.insert('', 'end', iid=key, values=(label, key, state))
         if previous and tree.exists(previous[0]):
             tree.selection_set(previous)
@@ -200,9 +234,12 @@ class Selector:
             target_kind = {'异画卡面': 'card_skin', '其他卡牌': 'card', '本地动态异画': 'local_dynamic'}[tab['target_kind'].get()]
             if target['kind'] != target_kind or (tab['available'].get() and not target['available']):
                 continue
+            if target_kind == 'card' and key not in self.catalog.card_target_keys:
+                continue
             label = target['label']
             state = ('动态' if target['row'].get('spine_model', 'none') != 'none' else '静态') if target['available'] else '资源未匹配'
-            if self.matches(tab['target_search'].get(), label, key):
+            member_ids = self.catalog.card_families[self.catalog.card_roots[target['id']]] if target_kind == 'card' else []
+            if self.matches(tab['target_search'].get(), label, key, ' '.join(member_ids)):
                 tree.insert('', 'end', iid=key, values=(label, key, state))
         if previous and tree.exists(previous[0]):
             tree.selection_set(previous)
@@ -213,7 +250,9 @@ class Selector:
             return
         target = self.catalog.targets[selected[0]]
         row = target['row']
-        self.detail.set('目标：%s；图片：%s；动态骨架：%s。%s' % (
+        source = self.tabs[kind]['source'].selection()
+        scope = ('原卡整张更换，覆盖 %d 个已识别状态；' % len(self.catalog.card_families[source[0]])) if source else ''
+        self.detail.set(scope + '目标：%s；图片：%s；动态骨架：%s。%s' % (
             target['label'], row.get('sct_name', 'none'), row.get('spine_directory', 'card') + '/' + row.get('spine_model', 'none'),
             '缺少：' + ', '.join(target['missing']) if target['missing'] else '资源名称已匹配清单；实际加载待实测。'))
 
@@ -245,7 +284,8 @@ class Selector:
             target = self.catalog.targets[item['target']]
             self.mapping_tree.insert('', 'end', iid=str(index), values=(
                 '启用' if item['enabled'] else '关闭',
-                self.catalog.label(source_row) + ' [' + item['source'] + ']', target['label'] + ' [' + item['target'] + ']'))
+                self.catalog.label(source_row) + ' [' + item['source'] + '] · %d个状态' % len(self.catalog.card_families[item['source']]),
+                target['label'] + ' [' + item['target'] + ']'))
 
     def toggle_mapping(self):
         selection = self.mapping_tree.selection()
@@ -282,15 +322,18 @@ class Selector:
             return
         if self.dirty and not messagebox.askyesno('尚未保存', '载入将替换当前未保存的选择，是否继续？'):
             return
-        self.items, self.last_saved, self.dirty = items, path, False
+        migrated = self.catalog.loaded_migrated
+        self.items, self.last_saved, self.dirty = items, None if migrated else path, migrated
+        for key, variable in self.skin_vars.items():
+            variable.set(key in self.catalog.loaded_character_skins)
         self.render_mappings()
-        self.status.set('已载入：' + path)
+        self.status.set(('旧配置已按整卡合并，请另存新版配置；原文件未改动：' if migrated else '已载入：') + path)
 
     def save_config(self):
         if self.busy or not self.catalog:
             return
         try:
-            document = self.catalog.compile(self.items)
+            document = self.catalog.compile(self.items, character_skins=self.selected_skins())
         except MappingError as exc:
             messagebox.showerror('无法保存', str(exc))
             return
@@ -402,7 +445,7 @@ class Selector:
         if self.busy or not self.catalog:
             return
         try:
-            document = self.catalog.compile(self.items)
+            document = self.catalog.compile(self.items, character_skins=self.selected_skins())
         except MappingError as exc:
             messagebox.showerror('无法生成', str(exc))
             return

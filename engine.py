@@ -356,6 +356,15 @@ def manifest_check(table, manifest_path, add):
     if table.get('mode') == 'cards_only':
         for patch in table['selection'].get('card_overrides', {}).values():
             need.extend(patch.get('resources', []))
+    if table.get('angel_skin'):
+        from mapping import read_manifest
+        have = read_manifest(manifest_path)[0]
+        need.extend(table['angel_skin']['required'])
+    if table.get('character_skins'):
+        from mapping import read_manifest
+        have = read_manifest(manifest_path)[0]
+        for profile in table['character_skins']:
+            need.extend(profile['required'])
     miss = sorted(x for x in need if x not in have)
     add('目标文件在盘上', not miss, '%d 个全在' % len(need) if not miss
         else '缺 %d/%d 个（%s）' % (len(miss), len(need), ', '.join(miss[:2])))
