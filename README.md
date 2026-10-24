@@ -4,7 +4,7 @@ Windows 本地显示映射工具：指定整张原卡 A 显示成卡面 B，该�
 
 ## 下载与使用
 
-当前整卡测试包为 `card-change-0.3.1-test1-windows-x64.zip`，完整解压后运行 `card-change.exe`，不需要安装 Python、Node.js。GitHub 已发布的 0.2.1 不包含皮肤选项；当前测试版尚未发布。
+当前整卡测试版已发布：[下载 v0.3.1-test1](https://github.com/slyzhydt/card-change/releases/tag/v0.3.1-test1)。选择 `card-change-0.3.1-test1-windows-x64.zip`，完整解压后运行 `card-change.exe`，不需要安装 Python、Node.js；同页提供对应源码和 SHA256 校验文件。旧版 0.2.1 不包含皮肤选项。
 
 1. 首次点击“从游戏资源准备数据”，选择本机游戏 `gameres/manifest.ssra`。相邻的 `chunks` 分卷需要已下载到本机。
 2. 左侧按角色、卡名或编号选整张原卡；右侧选异画卡面、其他卡牌或本地动态异画。同一卡的已识别状态只显示一行。
@@ -75,6 +75,6 @@ python build_portable.py --node <node.exe> --ripper <ChaosZeroNightmareRipper-CL
 
 ## 检查与来源
 
-62 项 Python 检查、75 项卡面／旧逻辑检查、21 项天使独立沙箱检查、60 项多皮肤独立检查；皮肤真实合并载荷分别运行 25／61 项检查。便携包和真实程序生成的最终状态见 RELEASE_CHECKS.json；离线结果不代表游戏实测通过。
+62 项 Python 检查、75 项卡面／旧逻辑检查、21 项天使独立沙箱检查、60 项多皮肤独立检查；皮肤真实合并载荷分别运行 25／61 项检查。便携包和真实程序生成的检查结果见 RELEASE_CHECKS.json，它保留本地封存当时的状态（含 published:false）；当前发布状态和下载以对应 GitHub Release 为准。离线结果不代表游戏实测通过。
 
 基于 [yporoc/Chaoszeronightmare-RenderFreedom](https://github.com/yporoc/Chaoszeronightmare-RenderFreedom) 0.1.0 修改，沿用 [GPL-3.0](LICENSE)。当前测试版交付包含对应源码；此前公开版本见 GitHub Releases。
