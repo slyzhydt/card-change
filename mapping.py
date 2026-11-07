@@ -292,6 +292,34 @@ class Catalog:
             raise MappingError('整卡展开后的配置超过运行时容量，请减少本次选择的卡牌')
         return document
 
+    def compile_allmotion(self, selections, character_skins=None):
+        """Compile the current special selections plus every available dynamic card."""
+        selected = self.compile(selections, character_skins=character_skins)
+        cards = {}
+        for row in self.cards.values():
+            model = row.get('spine_model', 'none')
+            if not isinstance(model, str) or model in ('', 'none'):
+                continue
+            resources = ['card/' + model + '.' + ext for ext in ('scsp', 'atlas', 'sct')]
+            if not all(path in self.paths for path in resources):
+                continue
+            cards[row['id']] = {
+                'sct_name': 'none', 'spine_model': model, 'spine_directory': 'card',
+                'spine_layers': [], 'spine_cfx': False, 'resources': resources,
+            }
+        # Special effect/异画 entries explicitly selected by the user override the
+        # ordinary card-directory mapping for the same card family.
+        cards.update(selected['card_overrides'])
+        document = dict(selected)
+        document['card_overrides'] = cards
+        editor = dict(selected['_editor'])
+        editor['allmotion'] = True
+        document['_editor'] = editor
+        if len(cards) > 10000 or len(json.dumps(document, ensure_ascii=False,
+                                                  separators=(',', ':')).encode('utf-8')) > 1048576:
+            raise MappingError('全动态卡配置超过运行时容量')
+        return document
+
     def load_selection(self, path):
         document = json.loads(Path(path).read_text(encoding='utf-8-sig'))
         if not isinstance(document, dict):
