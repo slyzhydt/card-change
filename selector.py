@@ -79,7 +79,7 @@ class Selector:
         controls.pack(fill='x')
         for label, command in (('启用 / 关闭', self.toggle_mapping), ('删除', self.delete_mapping),
                                 ('载入配置', self.open_config), ('保存配置', self.save_config),
-                                ('生成测试副本', self.build_copy)):
+                                ('生成测试副本', self.build_copy), ('生成全动态副本', self.build_allmotion_copy)):
             ttk.Button(controls, text=label, command=command).pack(side='left', padx=(0, 6))
         ttk.Label(outer, textvariable=self.status, wraplength=1050, foreground='#235d84').pack(fill='x', pady=(9, 0))
         root.protocol('WM_DELETE_WINDOW', self.close)
@@ -456,6 +456,23 @@ class Selector:
         self.status.set('正在独立输出目录生成测试副本，输入文件保持只读……')
         manifest = self.catalog.manifest
         self.start_job(lambda: build_trial(source, document, manifest, lambda line: self.events.put(('line', line))))
+
+    def build_allmotion_copy(self):
+        if self.busy or not self.catalog:
+            return
+        try:
+            document = self.catalog.compile_allmotion(self.items, character_skins=self.selected_skins())
+        except MappingError as exc:
+            messagebox.showerror('无法生成全动态副本', str(exc))
+            return
+        source = filedialog.askopenfilename(title='选择接着加工的游戏程序副本', filetypes=[('程序', '*.exe')])
+        if not source:
+            return
+        from selector_jobs import build_trial
+        self.status.set('正在生成全动态卡测试副本，输入文件保持只读……')
+        manifest = self.catalog.manifest
+        self.start_job(lambda: build_trial(source, document, manifest,
+                                          lambda line: self.events.put(('line', line))))
 
     def close(self):
         if self.busy:

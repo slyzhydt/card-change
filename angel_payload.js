@@ -2,7 +2,7 @@
 function installAngelSkin(profile, options) {
   'use strict';
   var routes = Object.create(null), ready = false, failed = false, hits = 0;
-  var hooked = [], missing = [], events = [];
+  var hooked = [], missing = [], events = [], frameProbe = [];
   var fu = cc.FileUtils.getInstance(), exists = options.exists;
   var character = String(profile && profile.character), skin = String(profile && profile.skin);
   var daily = profile && profile.battle_model, dailyPath = null;
@@ -94,14 +94,56 @@ function installAngelSkin(profile, options) {
     }
     return result === null ? path : result;
   }
-  function wrap(owner, name, indices, nullable, label) {
+  // Some UI avatars are looked up from the frame cache by frame name, not by file path.
+  var FRAME_MAP = null;
+  function stemOf(value) {
+    var text = String(value).replace(/\\/g, '/'), slash = text.lastIndexOf('/');
+    if (slash >= 0) text = text.slice(slash + 1);
+    var dot = text.lastIndexOf('.');
+    return dot > 0 ? text.slice(0, dot) : text;
+  }
+  function frameMap() {
+    if (FRAME_MAP) return FRAME_MAP;
+    FRAME_MAP = Object.create(null);
+    Object.keys(routes).forEach(function (source) {
+      var from = stemOf(source), to = stemOf(routes[source]);
+      if (from && to && from !== to && !Object.prototype.hasOwnProperty.call(FRAME_MAP, from)) {
+        FRAME_MAP[from] = to;
+      }
+    });
+    note('帧名映射 ' + Object.keys(FRAME_MAP).length + ' 条');
+    return FRAME_MAP;
+  }
+  function frameRewrite(value) {
+    if (!ready || failed || !options.enabled() || typeof value !== 'string') return value;
+    if (value.indexOf('/') >= 0 || value.indexOf('\\') >= 0 ||
+        /\.(sct|scsp|atlas|png)$/i.test(value)) {
+      var mapped = rewrite(value);
+      if (mapped !== value) return mapped;
+      var suffixBare = value.replace(/\.(sct|png)$/i, '');
+      var suffixMap = frameMap();
+      if (Object.prototype.hasOwnProperty.call(suffixMap, suffixBare)) {
+        hits++;
+        if (hits <= 12) note(value + ' -> ' + suffixMap[suffixBare] + ' (frame-bare)');
+        return suffixMap[suffixBare];
+      }
+      return value;
+    }
+    var map = frameMap(), result = Object.prototype.hasOwnProperty.call(map, value) ? map[value] : value;
+    if (result !== value) {
+      hits++;
+      if (hits <= 12) note(value + ' -> ' + result);
+    }
+    return result;
+  }
+  function wrap(owner, name, indices, nullable, label, rewriter) {
     if (!owner || typeof owner[name] !== 'function') { missing.push(label); return; }
     var original = owner[name];
     try {
       owner[name] = function () {
         var args = Array.prototype.slice.call(arguments), changed = false;
         indices.forEach(function (index) {
-          var value = rewrite(args[index]);
+          var value = (rewriter || rewrite)(args[index]);
           if (value !== args[index]) changed = true;
           args[index] = value;
         });
@@ -158,7 +200,31 @@ function installAngelSkin(profile, options) {
     ['addImage', 'addImageAsync'].forEach(function (name) {
       wrap(cc.textureCache, name, [0], name === 'addImage', 'textureCache.' + name);
     });
-    wrap(cc.spriteFrameCache, 'addSpriteFrames', [0, 1], false, 'spriteFrameCache.addSpriteFrames');
+    var sfc = null;
+    if (typeof cc.SpriteFrameCache !== 'undefined' && cc.SpriteFrameCache &&
+        typeof cc.SpriteFrameCache.getInstance === 'function') {
+      try { sfc = cc.SpriteFrameCache.getInstance(); } catch (error) { sfc = null; }
+    }
+    if (!sfc) sfc = cc.spriteFrameCache;
+    if (sfc) {
+      wrap(sfc, 'addSpriteFrames', [0, 1], false, 'spriteFrameCache.addSpriteFrames');
+      var probe = [], seen = {}, current = sfc;
+      while (current && current !== Object.prototype) {
+        Object.getOwnPropertyNames(current).forEach(function (name) {
+          if (!seen[name] && typeof sfc[name] === 'function') { seen[name] = 1; probe.push(name); }
+        });
+        current = Object.getPrototypeOf(current);
+      }
+      frameProbe = probe.filter(function (name) { return /frame/i.test(name); }).sort();
+      note('帧缓存方法: ' + (frameProbe.join(',') || '(无)'));
+      wrap(sfc, 'getOrCreateSpriteFrame', [0], false, 'spriteFrameCache.getOrCreateSpriteFrame', frameRewrite);
+      wrap(sfc, 'getSpriteFrameByName', [0], false, 'spriteFrameCache.getSpriteFrameByName', frameRewrite);
+      wrap(sfc, 'getSpriteFrame', [0], false, 'spriteFrameCache.getSpriteFrame', frameRewrite);
+      wrap(sfc, 'addSpriteFrameWithFile', [0, 1], false, 'spriteFrameCache.addSpriteFrameWithFile', frameRewrite);
+      wrap(sfc, 'addSpriteFrame', [1], false, 'spriteFrameCache.addSpriteFrame', frameRewrite);
+    } else {
+      note('未取到 spriteFrameCache 实例，跳过按名取帧入口');
+    }
     if (typeof ccui !== 'undefined') {
       wrap(ccui.ImageView, 'create', [0], true, 'ImageView.create');
       wrap(ccui.ImageView && ccui.ImageView.prototype, 'loadTexture', [0], false, 'ImageView.loadTexture');
@@ -171,7 +237,8 @@ function installAngelSkin(profile, options) {
   var api = {
     status: function () { return { id: profile && profile.id, skin: skin, ready: ready, failed: failed,
       enabled: ready && !failed && options.enabled(), hits: hits, hooked: hooked.slice(),
-      unavailable: missing.slice(), events: events.slice(),
+      unavailable: missing.slice(), events: events.slice(), frameProbe: frameProbe.slice(),
+      frameMapSize: FRAME_MAP ? Object.keys(FRAME_MAP).length : 0,
       preserved: profile && profile.preserved || ['face/portrait/' + character + '_front', 'model/' + character + '_battle_ready'] }; },
     off: function () { failed = true; note('手动停止，后续加载保留原样；已显示的资源需重新进入场景'); }
   };

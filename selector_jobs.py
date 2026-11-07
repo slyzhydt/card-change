@@ -102,6 +102,7 @@ def build_trial(source, document, manifest, log=print):
             'expanded_card_ids': len(document['card_overrides']),
             'selected_resource_routes': len(document['routes']),
             'mode': 'cards_only',
+            'allmotion': bool(document.get('_editor', {}).get('allmotion')),
             'angel_skin_enabled': angel,
             'character_skins': skins,
             'configuration_baked': True,

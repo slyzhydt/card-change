@@ -13,7 +13,7 @@
   var REV = BAKED.revision || 'skinrender-1';
   var ATL = CARD_ONLY ? {} : (BAKED.atlases || {});
   var ATLKEYS = Object.keys(ATL);
-  var made = { create: 0, fu: 0, hit: 0, refuse: 0, animAsk: 0, animMiss: 0, skinAsk: 0, skinMiss: 0, fail: 0, autooff: 0, rowApplied: 0, rowReadOk: 0, rowReadBad: 0, bridge: 0, heal: 0, atlas: 0, cardAsk: 0, cardForced: 0, cardSkip: 0, cardNoGet: 0 };
+  var made = { create: 0, fu: 0, hit: 0, refuse: 0, animAsk: 0, animMiss: 0, skinAsk: 0, skinMiss: 0, fail: 0, autooff: 0, rowApplied: 0, rowReadOk: 0, rowReadBad: 0, bridge: 0, heal: 0, atlas: 0, cardAsk: 0, cardForced: 0, cardSkip: 0, cardNoGet: 0, layer: 0, layerFail: 0 };
   var logHit = {}, logRef = {}, animStem = {}, skinStem = {}, extra = {};
   var cfg = { off: false, nomap: false, nofu: false, nocreate: false, norow: false, noatl: false, tier: 'ABTSL', drop: [], heal: false };
   if (CARD_ONLY) { cfg.onlyselected = true; cfg.norow = true; cfg.noatl = true; }
@@ -146,7 +146,7 @@
       Object.keys(cards).forEach(function (id) {
         var p = cards[id], expected = [];
         if (!/^[A-Za-z0-9_-]{1,160}$/.test(id) || !p || typeof p !== 'object' ||
-            Object.keys(p).some(function (k) { return ['sct_name', 'spine_model', 'resources', 'spine_directory', 'spine_layers', 'spine_cfx'].indexOf(k) < 0; })) throw new Error('卡牌显示字段不符');
+            Object.keys(p).some(function (k) { return ['sct_name', 'spine_model', 'resources', 'spine_directory', 'spine_layers', 'spine_cfx', 'particles', 'parti2_pos', 'foil', 'foil_parti'].indexOf(k) < 0; })) throw new Error('卡牌显示字段不符');
         ['sct_name', 'spine_model'].forEach(function (field) {
           if (typeof p[field] !== 'string' || !/^(?:none|[A-Za-z0-9_-]+)$/.test(p[field])) throw new Error('卡牌资源名不符');
         });
@@ -166,7 +166,19 @@
         }
         if (!expected.length || !Array.isArray(p.resources) || p.resources.length !== expected.length ||
             expected.some(function (name) { return p.resources.indexOf(name) < 0; })) throw new Error('卡牌资源清单不完整');
-        cardPicked[id] = { sct_name: p.sct_name, spine_model: p.spine_model, resources: expected, relocated: directory === 'effect' };
+        var particles = p.particles === undefined ? null : p.particles;
+        if (particles !== null && (!Array.isArray(particles) || particles.length > 8 ||
+            particles.some(function (name) { return typeof name !== 'string' || !/^[A-Za-z0-9_-]+$/.test(name); }))) throw new Error('卡面粒子字段不符');
+        var partiPos = p.parti2_pos === undefined ? null : p.parti2_pos;
+        if (partiPos !== null && (typeof partiPos !== 'object' || Array.isArray(partiPos) ||
+            !isFinite(Number(partiPos.x)) || !isFinite(Number(partiPos.y)))) throw new Error('卡面粒子位置不符');
+        var foil = p.foil === undefined ? null : p.foil;
+        var foilParti = p.foil_parti === undefined ? null : p.foil_parti;
+        if ((foil !== null && (typeof foil !== 'string' || !/^[A-Za-z0-9_-]+$/.test(foil))) ||
+            (foilParti !== null && (typeof foilParti !== 'string' || !/^[A-Za-z0-9_-]+$/.test(foilParti)))) throw new Error('卡面流光字段不符');
+        cardPicked[id] = { sct_name: p.sct_name, spine_model: p.spine_model, resources: expected, relocated: directory === 'effect',
+          spine_directory: directory, spine_layers: layers.slice(), spine_cfx: !!p.spine_cfx,
+          particles: particles === null ? null : particles.slice(), partiPos: partiPos, foil: foil, foilParti: foilParti };
         if (directory === 'effect') {
           [''].concat(layers.map(function (s) { return '_' + s; })).forEach(function (suffix) {
             var source = 'card/' + p.spine_model + suffix, target = 'effect/' + p.spine_model + suffix;
@@ -588,6 +600,133 @@
           log('AUTO-OFF 连续 ' + made.fail + ' 次创建失败 ⇒ 只观测不改路径');
         }
       }
+      function cfxValue(block, key) {
+        var m = block.match(new RegExp('<key>' + key + '</key>\\s*<(?:string|integer|real)>([^<]*)</(?:string|integer|real)>'));
+        return m ? m[1] : '';
+      }
+      function cfxParts(path) {
+        var text = '';
+        try { text = String(FU.getStringFromFile(path) || ''); }
+        catch (e) { log('LAYER CFX 读取失败 ' + path + ' ' + type_(e)); return []; }
+        var blocks = text.match(/<dict>((?:(?!<dict>)[\s\S])*?)<\/dict>/g) || [], parts = [];
+        blocks.forEach(function (block) {
+          if (/<key>disable<\/key>\s*<true\s*\/>/.test(block)) return;
+          var source = cfxValue(block, 'source'), format = cfxValue(block, 'format');
+          if (!source || !format) return;
+          parts.push({ source: source, format: format, z: Number(cfxValue(block, 'z')) || 0,
+            x: Number(cfxValue(block, 'x')) || 0, y: Number(cfxValue(block, 'y')) || 0 });
+        });
+        return parts;
+      }
+      function layerNode(part) {
+        if (part.format === 'particle') {
+          if (typeof y2d === 'undefined' || !y2d.ParticleEffect2D || !y2d.ParticleEffect2D.create) return null;
+          return y2d.ParticleEffect2D.create('effect/' + part.source + '.particle');
+        }
+        if (typeof bootres !== 'undefined' && bootres && typeof bootres.get_effect === 'function') {
+          return bootres.get_effect(part.source);
+        }
+        if (ORIG) {
+          return ORIG.call(sp.SkeletonAnimation, 'effect/' + part.source + '.scsp',
+            'effect/' + part.source + '.atlas', 1);
+        }
+        return null;
+      }
+      function playLayer(node, source) {
+        var chosen = null;
+        try {
+          if (typeof node.isExistAnimation === 'function') {
+            var names = ['animation', 'idle', 'loop', 'normal', 'standby', 'default', 'firework1'];
+            for (var i = 0; i < names.length; i++) {
+              var exists = false;
+              try { exists = node.isExistAnimation(names[i]); } catch (e) { exists = false; }
+              if (exists === true) { chosen = names[i]; break; }
+            }
+          }
+        } catch (e) { }
+        try {
+          if (typeof node.setAnimation === 'function') node.setAnimation(0, chosen || 'animation', true);
+        } catch (e) { log('LAYER 动画失败 ' + source + ' ' + type_(e)); }
+        return chosen;
+      }
+      function addLayer(main, part, relativeZ, label) {
+        var node = null;
+        try { node = layerNode(part); }
+        catch (e) { made.layerFail++; log('LAYER 创建失败 ' + label + ':' + part.source + ' ' + type_(e)); return false; }
+        if (!node) { made.layerFail++; log('LAYER 资源不可用 ' + label + ':' + part.source); return false; }
+        try { if (part.x || part.y) node.setPosition(part.x, part.y); } catch (e) { }
+        try { if (typeof node.setName === 'function') node.setName('skin-layer:' + part.source); } catch (e) { }
+        if (part.format === 'spine') playLayer(node, part.source);
+        try {
+          main.addChild(node);
+          if (typeof node.setLocalZOrder === 'function') node.setLocalZOrder(relativeZ);
+          if (part.format === 'particle' && typeof node.start === 'function') node.start();
+          made.layer++;
+          log('LAYER + ' + label + ' ' + part.format + ' ' + part.source + ' z=' + relativeZ);
+          if (part.format === 'spine') {
+            try {
+              var scheduler = cc.director && cc.director.getScheduler ? cc.director.getScheduler() : null;
+              if (scheduler && typeof scheduler.scheduleOnce === 'function') {
+                scheduler.scheduleOnce(function () { playLayer(node, part.source); }, 0, 0.15, false);
+              }
+            } catch (e) { }
+          }
+          return true;
+        } catch (e) {
+          made.layerFail++;
+          log('LAYER 挂载失败 ' + label + ':' + part.source + ' ' + type_(e));
+          return false;
+        }
+      }
+      function decorateCfx(main, cfxPath, mainModel, baseOffset, layout) {
+        var parts = cfxParts(cfxPath), mainZ = 0;
+        if (layout && Array.isArray(layout.particles)) {
+          parts = parts.filter(function (part) { return part.format !== 'particle'; });
+          layout.particles.forEach(function (name, index) {
+            var pos = index === 1 && layout.partiPos ? layout.partiPos : null;
+            parts.push({ source: name, format: 'particle', z: index === 0 ? -3 : 1,
+              x: pos ? Number(pos.x) || 0 : 0, y: pos ? Number(pos.y) || 0 : 0 });
+          });
+        }
+        parts.forEach(function (part) { if (part.source === mainModel) mainZ = part.z; });
+        var particleIndex = 0;
+        parts.forEach(function (part) {
+          if (part.source === mainModel) return;
+          var z;
+          if (baseOffset !== null) z = baseOffset + part.z - 1;
+          else if (part.format === 'particle') z = particleIndex++ === 0 ? -3 : 1;
+          else if (/_bg$/.test(part.source)) z = -2;
+          else if (/_eff$/.test(part.source)) z = -1;
+          else z = part.z - mainZ;
+          addLayer(main, part, z, cfxPath.split('/').pop());
+        });
+      }
+      function decorateCard(inst, path) {
+        if (!REDIR_ON || cfg.off || !inst || inst.__skinRenderLayers) return inst;
+        var s = stemOf(path), rec = null;
+        if (!s || s.ext !== 'scsp') return inst;
+        Object.keys(CARD_PATCHES).some(function (id) {
+          var p = CARD_PATCHES[id];
+          if (p.spine_model === s.stem && p.spine_cfx) { rec = p; return true; }
+          return false;
+        });
+        if (!rec) return inst;
+        inst.__skinRenderLayers = true;
+        decorateCfx(inst, 'effect/' + rec.spine_model + '.cfx', rec.spine_model, null, rec);
+        if (rec.foil) {
+          addLayer(inst, { source: rec.foil, format: 'spine', z: 2, x: 0, y: 0 }, 2, 'foil');
+          if (rec.foilParti) {
+            addLayer(inst, { source: rec.foilParti, format: 'particle', z: 3, x: 0, y: 0 }, 3, 'foil-particle');
+          }
+        } else {
+          try {
+            if (FU.isFileExist('effect/card_skin_foil_eff.cfx')) {
+              decorateCfx(inst, 'effect/card_skin_foil_eff.cfx', null, 2, null);
+            }
+          } catch (e) { }
+        }
+        return inst;
+      }
       sp.SkeletonAnimation.create = function (a, b, c) {
         if (!DBQ) { armTrap(); if (DBQ) didInit = false; }
         onSafeMoment();
@@ -610,6 +749,7 @@
           } else throw e;
         }
         made.create++;
+        decorateCard(inst, na);
         spy(inst, s ? s.full + '.' + s.ext : String(a), redirected, (Object.prototype.hasOwnProperty.call(M, s ? s.full : '') && M[s.full].va) ? M[s.full].va : null);
         if (made.create % 40 === 0) { dump('create'); flush(); }
         return inst;
@@ -645,7 +785,7 @@
     log('READY 路径表=' + Object.keys(M).length + ' 分层=' + JSON.stringify(cnt) + ' 放行层=' + cfg.tier +
       ' 行覆盖=' + Object.keys(ROWS['char_base'] || {}).length + ' 行 合成图集=' + ATLKEYS.length + ' 条 trap=' + TRAP +
       ' 图集合成=' + (cfg.tier.indexOf('M') >= 0 ? '开' : '关(官方图集只支持单页)') + ' 自愈回落=' + (cfg.heal ? '开' : '关(皮肤模型常驻)') +
-      ' 卡面动画=' + (CARD_ARMED ? '开' : '等赋值'));
+      ' 卡面动画=' + (CARD_ARMED ? '开' : '等赋值') + ' 卡面图层=' + made.layer + '/' + made.layerFail);
     flush();
   } catch (F) { say(BUILD.toUpperCase() + ' FATAL ' + F + ' | ' + String((F && F.stack) || '').split('\n').slice(0, 3).join(' << ')); }
 })();
